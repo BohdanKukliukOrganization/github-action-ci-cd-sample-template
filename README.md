@@ -1,5 +1,5 @@
-<img src="https://github.com/bohdanhub/ci-cd-bkukl-nebo/workflows/python-workflow/badge.svg?branch=main"><br>
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=bohdanhub_ci-cd-bkukl-nebo&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bohdanhub_ci-cd-bkukl-nebo)
+<img src="https://github.com/BohdanKukliukOrganization/github-action-ci-cd-sample-template/workflows/python-workflow/badge.svg?branch=main"><br>
+/*[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=bohdanhub_ci-cd-bkukl-nebo&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=bohdanhub_ci-cd-bkukl-nebo)*/
 [![codebeat badge](https://codebeat.co/badges/0e006c74-a2f9-4f34-9cf4-2378fb7d995a)](https://codebeat.co/projects/github-com-edonosotti-ci-cd-tutorial-sample-app-master)
 [![Maintainability](https://api.codeclimate.com/v1/badges/e14a2647843de209fd5e/maintainability)](https://codeclimate.com/github/edonosotti/ci-cd-tutorial-sample-app/maintainability)
 
