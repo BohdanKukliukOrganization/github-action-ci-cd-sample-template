@@ -1,0 +1,176 @@
+name: python-workflow
+
+env:
+  DEPLOY_PACKAGE_NAME      : "nebo_flask_app.zip"
+
+on:
+  workflow_run:
+    workflows: ["sonarcloud-required-workflow"]
+    types:
+      - completed
+
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.8"]
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install flake8 pytest
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+    - name: Lint with flake8
+      run: |
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+    - name: Test with pytest and unittest
+      run: |
+        pytest
+        python -m unittest discover
+    - name: Slack failed notification
+      if: failure()
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_MESSAGE: 'Testing finished with fail'
+
+  slack-notify-test:
+    runs-on: ubuntu-latest
+    needs: [tests]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Slack success notification
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_MESSAGE: 'Testing finished successfully :rocket:'
+        
+  sonarcloud:
+    runs-on: ubuntu-latest
+    needs: [tests]
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        # Disabling shallow clone is recommended for improving relevancy of reporting
+        fetch-depth: 0
+    - name: SonarCloud Scan
+      uses: sonarsource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.My_github_token }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        
+    - name: SonarCloud Quality Gate check
+      id: sonarcloud-quality-gate-check
+      uses: sonarsource/sonarqube-quality-gate-action@master
+      # Force to fail step after specific time.
+      timeout-minutes: 5
+      env:
+       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+       
+    - name: "Example show SonarQube Quality Gate Status value"
+      run: echo "The Quality Gate status is ${{ steps.sonarcloud-quality-gate-check.outputs.quality-gate-status }}"
+
+  deploy-stage-env:
+    runs-on: ubuntu-latest
+    needs: [tests]
+    environment: nebo-github-stage-env
+    if: github.ref == 'refs/heads/stage'
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Create ZIP deployment package
+      run : zip -r ${{ env.DEPLOY_PACKAGE_NAME }} ./ -x *.git*
+
+    - name: Configure my AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id    :  ${{ secrets.MY_AWS_ACCESS_KEY }}
+        aws-secret-access-key:  ${{ secrets.MY_AWS_SECRET_KEY }}
+        aws-region           :  ${{ secrets.AWS_REGION_NAME }}
+    - name: Copy Deployment package to S3 bucket
+      run : aws s3 cp ${{ env.DEPLOY_PACKAGE_NAME }}  s3://${{ secrets.EB_PACKAGE_S3_BUCKET_NAME }}/stage/
+      
+    - name: Print Happy Message for CI finish
+      run : echo "CI Pipeline part Finished successfully!"
+      
+    - name: Create new ElasticBeanstalk Application Version
+      run : |
+        aws elasticbeanstalk create-application-version \
+        --application-name ${{ secrets.EB_APPLICATION_NAME }} \
+        --source-bundle S3Bucket="${{ secrets.EB_PACKAGE_S3_BUCKET_NAME }}",S3Key="stage/${{ env.DEPLOY_PACKAGE_NAME }}" \
+        --version-label "Ver-${{ github.sha }}" \
+        --description "CoimmitSHA-${{ github.sha }}"
+      
+    - name: Deploy new ElasticBeanstalk Application Version
+      run : aws elasticbeanstalk update-environment --environment-name ${{ secrets.EB_ENVIROMENT_NAME }} --version-label "Ver-${{ github.sha }}"
+    
+    - name: Slack failed deploy notification
+      if: failure()
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_MESSAGE: 'Deploy finished with errors'
+    
+  slack-notify-deploy-stage:
+    runs-on: ubuntu-latest
+    needs: [deploy-stage-env]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Slack success deploy notification
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_MESSAGE: 'Deploy to s3 and update of instance finished successfully :rocket:'     
+
+  deploy-prod-env:
+    runs-on: ubuntu-latest
+    needs: [tests]
+    environment: nebo-github-prod-env
+    if: github.ref == 'refs/heads/main' && github.event.pull_request.merged == true
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Create ZIP deployment package
+      run : zip -r ${{ env.DEPLOY_PACKAGE_NAME }} ./ -x *.git*
+
+    - name: Configure my AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id    :  ${{ secrets.MY_AWS_ACCESS_KEY }}
+        aws-secret-access-key:  ${{ secrets.MY_AWS_SECRET_KEY }}
+        aws-region           :  ${{ secrets.AWS_REGION_NAME }}
+        
+    - name: Copy Deployment package to S3 bucket
+      run : aws s3 cp ${{ env.DEPLOY_PACKAGE_NAME }}  s3://${{ secrets.EB_PACKAGE_S3_BUCKET_NAME }}/prod
+        
+    - name: Create new ElasticBeanstalk Application Version
+      run : |
+        aws elasticbeanstalk create-application-version \
+        --application-name ${{ secrets.EB_APPLICATION_NAME }} \
+        --source-bundle S3Bucket="${{ secrets.EB_PACKAGE_S3_BUCKET_NAME }}",S3Key="prod/${{ env.DEPLOY_PACKAGE_NAME }}" \
+        --version-label "Ver-${{ github.sha }}" \
+        --description "CoimmitSHA-${{ github.sha }}"
+      
+    - name: Deploy new ElasticBeanstalk Application Version
+      run : aws elasticbeanstalk update-environment --environment-name ${{ secrets.EB_ENVIROMENT_NAME }} --version-label "Ver-${{ github.sha }}"
